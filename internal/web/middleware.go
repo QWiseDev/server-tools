@@ -38,17 +38,22 @@ func bearerToken(h string) string {
 	return strings.TrimSpace(tok)
 }
 
+// sessionCookie 是控制台会话 cookie：浏览器 WebSocket 无法携带
+// Authorization 头，靠它完成 /api/ws/term 的会话鉴权。
+const sessionCookie = "smcp_session"
+
 // AuthGuard 是全局鉴权中间件：
 //   - / 与 /healthz 与 /api/login、/api/authinfo 豁免
 //   - /mcp     需要 MCP 密钥（Authorization: Bearer sk-...，且未停用）
-//   - /api/*   需要控制台登录会话（admin_password 为空则免登录）
+//   - /api/*   需要控制台登录会话（Authorization 头或 smcp_session cookie）；
+//     admin_password 为空则免登录
 func AuthGuard(cfg *config.Config, keys *auth.KeyStore, sess *auth.Sessions) func(http.Handler) http.Handler {
 	exempt := map[string]bool{"/": true, "/healthz": true, "/api/login": true, "/api/authinfo": true}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
 			switch {
-			case exempt[p]:
+			case exempt[p] || strings.HasPrefix(p, "/static/"):
 				next.ServeHTTP(w, r)
 			case p == "/mcp" || strings.HasPrefix(p, "/mcp/"):
 				key := keys.GetByKey(bearerToken(r.Header.Get("Authorization")))
@@ -60,7 +65,13 @@ func AuthGuard(cfg *config.Config, keys *auth.KeyStore, sess *auth.Sessions) fun
 					context.WithValue(r.Context(), ctxKeyMCPKey, key)))
 			case strings.HasPrefix(p, "/api"):
 				if cfg.AdminPassword != "" {
-					if !sess.Check(bearerToken(r.Header.Get("Authorization"))) {
+					tok := bearerToken(r.Header.Get("Authorization"))
+					if tok == "" {
+						if c, err := r.Cookie(sessionCookie); err == nil {
+							tok = c.Value
+						}
+					}
+					if !sess.Check(tok) {
 						http.Error(w, "unauthorized: 请先登录", http.StatusUnauthorized)
 						return
 					}

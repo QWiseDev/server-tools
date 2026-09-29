@@ -16,6 +16,7 @@ import (
 	"servermcp/internal/logsw"
 	"servermcp/internal/shell"
 	"servermcp/internal/sysinfo"
+	"servermcp/internal/term"
 )
 
 // Server 汇总 web 层依赖。
@@ -28,6 +29,7 @@ type Server struct {
 	DB     *dbquery.Querier
 	Arthas *arthas.Manager
 	FS     *fsbrowse.Manager
+	Term   *term.Manager
 }
 
 // ---- 小工具 ----
@@ -63,8 +65,12 @@ func (s *Server) Register(mux *http.ServeMux, mcpHandler http.Handler, indexHTML
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// 控制台静态资源（xterm.js 等）
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(StaticFS())))
 	// MCP streamable HTTP 端点
 	mux.Handle("/mcp", mcpHandler)
+	// 交互终端（WebSocket + PTY）
+	mux.HandleFunc("/api/ws/term", s.Term.ServeHTTP)
 
 	// ---- 鉴权 / 密钥管理 ----
 	mux.HandleFunc("POST /api/login", s.handleLogin)
@@ -117,11 +123,24 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "密码错误"})
 		return
 	}
+	// 会话同时下发 cookie：WebSocket（/api/ws/term）无法携带 Authorization 头
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   s.Cfg.SessionTTLH * 3600,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "ttl_h": s.Cfg.SessionTTLH})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.Sess.Delete(bearerToken(r.Header.Get("Authorization")))
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteStrictMode, MaxAge: -1,
+	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

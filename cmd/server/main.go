@@ -22,6 +22,7 @@ import (
 	"servermcp/internal/logsw"
 	"servermcp/internal/mcpserver"
 	"servermcp/internal/shell"
+	"servermcp/internal/term"
 	"servermcp/internal/web"
 )
 
@@ -62,6 +63,7 @@ func main() {
 		DB:     dbquery.New(cfg.DBPath, cfg.MaxOutput),
 		Arthas: arthas.New(cfg),
 		FS:     fsbrowse.New(cfg.FsRoots),
+		Term:   term.New(cfg.ShellEnabled, "", 8),
 	}
 	mc := mcpserver.NewServer(mcpserver.Deps{
 		Shell:  runner,

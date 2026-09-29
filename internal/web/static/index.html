@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>server-mcp 运维控制台</title>
+<link rel="stylesheet" href="/static/vendor/xterm.css">
 <style>
 :root{--bg:#0f1419;--panel:#161c23;--line:#2a3441;--fg:#d8dee6;--dim:#8a97a6;--acc:#4cc2ff;--err:#ff8080;--ok:#7dd88f}
 *{box-sizing:border-box}
@@ -59,6 +60,7 @@ fieldset label{margin-right:12px;font-size:13px}
 <nav id="nav">
   <button data-v="overview" class="on">总览</button>
   <button data-v="shell">Shell</button>
+  <button data-v="term">终端</button>
   <button data-v="proc">进程 / 端口</button>
   <button data-v="log">日志</button>
   <button data-v="db">数据库</button>
@@ -85,6 +87,16 @@ fieldset label{margin-right:12px;font-size:13px}
   <div class="row"><button class="act" onclick="execShell()">执行</button>
     <span class="muted">bash -lc 执行；受 shell_allow / shell_deny / shell_timeout_max 约束，超时整组强杀</span></div>
   <pre id="s-out">输入命令后点「执行」。</pre>
+</section>
+
+<section class="view" id="v-term">
+  <div class="row">
+    <span class="muted" id="t-status">未连接</span>
+    <button class="mini" onclick="termConnect()">重连</button>
+    <button class="mini warn" onclick="termDisconnect()">断开</button>
+    <span class="muted">登录态交互 shell（等同 SSH）：cd/环境保持、Tab 补全、Ctrl-C、vim/top 可用；受会话鉴权与 shell_enabled 约束</span>
+  </div>
+  <div id="t-wrap" style="display:none;background:#0b0f13;border:1px solid var(--line);border-radius:10px;padding:8px"></div>
 </section>
 
 <section class="view" id="v-proc">
@@ -194,6 +206,8 @@ fieldset label{margin-right:12px;font-size:13px}
   </div>
 </div>
 
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/addon-fit.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 let TOKEN=localStorage.getItem("server_mcp_session")||"";
@@ -237,7 +251,8 @@ function table(cols,rows){
 }
 
 /* tabs */
-const loaders={overview:loadOverview,proc:loadProc,log:initLogs,fs:()=>fsGo(""),keys:loadKeys,arthas:loadArthas};
+const loaders={overview:loadOverview,proc:loadProc,log:initLogs,fs:()=>fsGo(""),
+  term:termAuto,keys:loadKeys,arthas:loadArthas};
 document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#nav button").forEach(x=>x.classList.remove("on"));
   document.querySelectorAll(".view").forEach(x=>x.classList.remove("on"));
@@ -279,6 +294,43 @@ async function execShell(){
     $("#s-out").scrollTop=$("#s-out").scrollHeight;
   }catch(e){$("#s-out").textContent="执行失败："+e.message}
 }
+
+/* 交互终端（WebSocket + PTY，等同 SSH） */
+let term=null,termSocket=null,termFit=null,termInit=false;
+function termStatus(s){$("#t-status").textContent=s}
+function termAuto(){
+  if(termSocket)$("#t-wrap").style.display="block";
+  else termConnect();
+}
+function termConnect(){
+  if(termSocket&&termSocket.readyState<=1)return;
+  if(!window.Terminal){toast("xterm 未加载");return}
+  if(!termInit){
+    term=new Terminal({cursorBlink:true,fontFamily:"ui-monospace,Menlo,monospace",fontSize:13,
+      theme:{background:"#0b0f13"},scrollback:5000});
+    termFit=new FitAddon.FitAddon();
+    term.loadAddon(termFit);
+    term.open($("#t-wrap"));
+    termInit=true;
+    term.onData(d=>{if(termSocket&&termSocket.readyState===1)termSocket.send(new TextEncoder().encode(d))});
+  }
+  $("#t-wrap").style.display="block";
+  const proto=location.protocol==="https:"?"wss":"ws";
+  const ws=new WebSocket(`${proto}://${location.host}/api/ws/term`);
+  ws.binaryType="arraybuffer";
+  termSocket=ws;
+  termStatus("连接中…");
+  ws.onopen=()=>{termStatus("已连接（"+ (term.cols)+"×"+(term.rows)+"）");term.focus();try{termFit.fit()}catch(e){}termSendResize()};
+  ws.onmessage=e=>{term.write(new Uint8Array(e.data))};
+  ws.onclose=()=>{termStatus("已断开");termSocket=null};
+  ws.onerror=()=>{termStatus("连接错误")};
+}
+function termSendResize(){
+  if(!termFit||!termSocket||termSocket.readyState!==1)return;
+  termSocket.send(JSON.stringify({type:"resize",cols:term.cols,rows:term.rows}));
+}
+window.addEventListener("resize",()=>{if(termInit){try{termFit.fit()}catch(e){}termSendResize()}});
+function termDisconnect(){if(termSocket){termSocket.close();termSocket=null}}
 
 /* 进程/端口 */
 async function loadProc(){

@@ -7,8 +7,9 @@
   ZCode (agent) ────►  /mcp       MCP streamable HTTP 端点    │
                     │            （Bearer 密钥，按工具授权）    │
   浏览器 (人)  ──────►  /         Web 控制台（密码登录）        │──► 核心能力
-                    │  /api/*    控制台背后的 JSON API          │   ├─ Shell 执行（超时+强杀）
-                    │                                          │   ├─ 进程/端口/负载 (gopsutil)
+                    │  /api/*    控制台背后的 JSON API          │   ├─ 交互终端（PTY，等同 SSH）
+                    │                                          │   ├─ Shell 执行（超时+强杀）
+  Tailscale 内网层   │                                          │   ├─ 进程/端口/负载 (gopsutil)
   Tailscale 内网层   │                                          │   ├─ 日志 tail + grep（白名单）
                     └────────────────────────────────────────┘   ├─ SQLite 只读查询
                                                                  └─ Arthas attach/telnet
@@ -29,7 +30,8 @@ serverMcp/
 │   ├── fsbrowse/             # 只读文件浏览：根目录白名单/目录列表/预览/下载
 │   ├── arthas/               # telnet.go 迷你 telnet 客户端；arthas.go attach/执行
 │   ├── mcpserver/            # tools.go 工具清单/权限分组；server.go 注册与按密钥过滤
-│   ├── web/                  # 路由/鉴权中间件/JSON API；static/ 内嵌控制台页面
+│   ├── term/                 # 交互终端：PTY + WebSocket 桥接（creack/pty, gorilla/websocket）
+│   ├── web/                  # 路由/鉴权中间件/JSON API；static/ 内嵌控制台页面（含 xterm.js）
 │   └── textutil/             # UTF-8 安全截断
 ├── config.example.json       # 配置样例（复制为 config.json）
 ├── deploy/server-mcp.service # systemd 单元
@@ -47,6 +49,7 @@ serverMcp/
 | `tool_list_logs` / `tool_tail_log` | 日志 | 白名单文件 + 白名单容器日志，tail + grep（子串或 `/正则/`） |
 | `tool_search_log` | 日志 | 大文件全量搜索：子串或 `/正则/`、忽略大小写、全文件行号；分页续扫（`next_offset`），GB 级文件内存恒定 |
 | `tool_query_db` | 数据库 | SQLite 只读查询，仅单条 SELECT/WITH/EXPLAIN；`db_path` 留空则关闭 |
+| —（页面专属） | 终端 | 交互终端（WebSocket + PTY + xterm.js）：cd/环境保持、Tab 补全、Ctrl-C、vim/top 全屏程序，体验等同 SSH |
 | —（页面专属） | 文件 | 只读文件浏览：目录列表/文本预览（尾部 256K，二进制识别）/下载，范围限 `fs_roots` 白名单 |
 | `tool_list_jvms` | Arthas | JVM 进程列表（标注 Tomcat） |
 | `tool_arthas_status` | Arthas | 安装/attach 状态、Web 控制台地址 |
@@ -71,9 +74,12 @@ serverMcp/
 - **网络**：默认只绑 `127.0.0.1`；对外提供时绑 Tailscale IP（100.x），公网不可达。这是第一道防线。
 - **文件浏览**：只读；路径先 realpath 解析再强制落在 `fs_roots` 白名单内，`..` 穿越与软链逃逸一律拒绝；
   预览上限 256K 并识别二进制；写操作请走 Shell（保持「shell 可写、其余只读」的一致边界）。
-- **Shell 执行**：`shell_enabled` 总开关；`shell_timeout_max` 限制单次超时上限（默认 300s），
+- **Shell 执行**：`shell_enabled` 总开关（同时控制交互终端）；`shell_timeout_max` 限制单次超时上限（默认 300s），
   超时对整个进程组 `SIGKILL` 不留孤儿；`shell_deny` 黑名单正则（优先级最高）；`shell_allow`
   白名单正则（非空时未命中即拒）。注意：名单只是绊线而非沙箱，shell 能做本用户权限内的任何事。
+- **交互终端**：WebSocket + PTY，等同给管理员开了一条 SSH——受登录会话（含 cookie 通道）与
+  `shell_enabled` 约束，并发上限 8；交互输入无法逐条过 allow/deny 名单，它是管理员的 shell，
+  请像管理 SSH 账号一样管理控制台密码。断开即整组杀进程，不留孤儿。
 - **日志白名单**：只读 `log_files`（支持 glob）与 `log_dirs` 前缀内的文件，以及 `docker_containers` 里的容器。
 - **数据库只读**：`mode=ro` + `query_only` pragma + 语句类型白名单 + 单条限制 + 最多 500 行。
 - **Arthas 黑名单**：禁止 `ognl` `redefine` `mc` `stop` `shutdown` 等写命令；单次执行硬超时 ≤120s。
@@ -164,3 +170,4 @@ sudo unzip -q arthas-bin.zip
 - SQLite：只读查询（含中文）✅；INSERT 拒绝 ✅；db_path 留空报能力关闭 ✅
 - 文件浏览：根视图/目录列表/尾部预览/二进制识别/下载 ✅；`/etc/passwd`、多级 `..` 穿越、软链逃逸全部拒绝 ✅；未登录 401 ✅
 - 全文件搜索（10 万行/2.9MB 样本 + limit=1/2 强制分页）：子串/正则命中行号准确 ✅；续扫行号与全文件对齐（50001 → 100002）✅；ci 忽略大小写 ✅；非法正则 400 ✅；MCP tools/list 12 个工具、tool_search_log 翻页 ✅
+- 交互终端（WS+PTY）：未登录握手 401 ✅；登录会话连接后命令回显 ✅；cd/环境变量跨命令保持 ✅；resize 控制帧生效 ✅；客户端断开后进程组整杀、无孤儿 ✅；xterm.js/fit-addon 由二进制内嵌伺服 ✅
