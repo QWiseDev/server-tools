@@ -374,7 +374,6 @@ async function fsGo(p){
       name:e.is_dir
         ?`<a href="#" onclick="fsGo('${esc(e.path)}');return false" style="color:var(--acc)">📁 ${esc(e.name)}</a>`
         :`📄 ${esc(e.name)}`,
-      isDir:e.is_dir,
       size:e.is_dir?"-":humanSize(e.size),
       mtime:e.mtime||"-",
       actions:e.is_dir?""
@@ -382,7 +381,7 @@ async function fsGo(p){
            <button class="mini" onclick="fsDownload('${esc(e.path)}','${esc(e.name)}')">下载</button>`
     }));
     $("#fs-table").innerHTML=rows.length?table(
-      [["名称",r=>r.name],["大小",r=>r.size,r.isDir?"":"num"],
+      [["名称",r=>r.name],["大小",r=>r.size,"num"],
        ["修改时间",r=>esc(r.mtime)],["操作",r=>r.actions]],rows)
       :'<p class="muted">空目录</p>';
   }catch(e){$("#fs-table").innerHTML=`<p class="err">${esc(e.message)}</p>`}
