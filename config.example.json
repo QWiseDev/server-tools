@@ -1,0 +1,24 @@
+{
+  "host": "127.0.0.1",
+  "port": 8808,
+  "admin_password": "改成足够长的随机密码",
+  "keys_path": "keys.json",
+  "session_ttl_h": 168,
+  "db_path": "",
+  "log_files": [
+    "/var/log/syslog",
+    "/var/log/nginx/access.log"
+  ],
+  "log_dirs": ["/var/log/myapp"],
+  "docker_containers": [],
+  "arthas_home": "",
+  "arthas_telnet_port": 3658,
+  "arthas_http_port": 8563,
+  "java_bin": "",
+  "max_output": 20000,
+  "shell_enabled": true,
+  "shell_allow": [],
+  "shell_deny": [],
+  "shell_timeout_max": 300,
+  "shell_cwd": ""
+}

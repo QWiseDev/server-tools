@@ -1,0 +1,18 @@
+[Unit]
+Description=server-mcp - general server ops MCP server + web console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 需要 Arthas attach 目标 JVM 时，与目标 JVM 同用户运行（或 root）
+User=app
+WorkingDirectory=/opt/server-mcp
+ExecStart=/opt/server-mcp/server-mcp --config /opt/server-mcp/config.json
+Restart=on-failure
+RestartSec=3
+# keys.json 由服务自行维护（0600）；config.json 里 admin_password 请用足够长的随机密码
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>server-mcp 运维控制台</title>
+<style>
+:root{--bg:#0f1419;--panel:#161c23;--line:#2a3441;--fg:#d8dee6;--dim:#8a97a6;--acc:#4cc2ff;--err:#ff8080;--ok:#7dd88f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0}
+header .sp{margin-left:auto;display:flex;gap:8px;align-items:center}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 10px;font-size:13px}
+nav{display:flex;gap:4px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+nav button{background:none;border:1px solid transparent;color:var(--dim);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:14px}
+nav button.on{color:var(--acc);border-color:var(--line);background:var(--bg)}
+main{padding:16px;max-width:1150px;margin:0 auto}
+.view{display:none}.view.on{display:block}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.card b{display:block;font-size:20px;color:var(--acc)}
+.card span{color:var(--dim);font-size:12px}
+table{width:100%;border-collapse:collapse;background:var(--panel);border-radius:10px;overflow:hidden}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;font-variant-numeric:tabular-nums;font-size:13px}
+th{color:var(--dim);font-weight:500;background:#1a212b}
+td.num{color:var(--acc)}
+pre{background:#0b0f13;border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;max-height:55vh;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;margin:8px 0}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+.row label{color:var(--dim);font-size:13px}
+textarea{width:100%;min-height:90px;font:13px ui-monospace,Menlo,monospace}
+.act{background:var(--acc);color:#04121f;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-weight:600}
+.mini{background:none;border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:3px 10px;cursor:pointer}
+.mini.warn{color:var(--err);border-color:var(--err)}
+.mini.good{color:var(--ok);border-color:var(--ok)}
+.muted{color:var(--dim);font-size:12px}
+.err{color:var(--err)}
+.chip{display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 8px;margin:1px;color:var(--acc);font-size:12px}
+.chip.off{color:var(--dim)}
+.code{font:12px ui-monospace,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px}
+fieldset{border:1px solid var(--line);border-radius:10px;margin:6px 0;padding:8px 12px}
+legend{color:var(--dim);font-size:12px;padding:0 6px}
+fieldset label{margin-right:12px;font-size:13px}
+.overlay{position:fixed;inset:0;background:rgba(4,8,12,.78);display:none;align-items:center;justify-content:center;z-index:50}
+.login{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;width:330px}
+.login h2{margin:0 0 4px;font-size:16px}
+.login input{width:100%;margin:10px 0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>server-mcp 运维控制台</h1>
+  <span class="muted" id="whoami"></span>
+  <div class="sp">
+    <span class="muted" id="auth-state"></span>
+    <button class="mini" id="btn-logout" style="display:none" onclick="logout()">退出</button>
+  </div>
+</header>
+<nav id="nav">
+  <button data-v="overview" class="on">总览</button>
+  <button data-v="shell">Shell</button>
+  <button data-v="proc">进程 / 端口</button>
+  <button data-v="log">日志</button>
+  <button data-v="db">数据库</button>
+  <button data-v="fs">文件</button>
+  <button data-v="keys">密钥</button>
+  <button data-v="arthas">Arthas</button>
+</nav>
+<main>
+
+<section class="view on" id="v-overview">
+  <div class="cards" id="ov-cards"></div>
+  <h3>CPU Top</h3>
+  <div id="ov-top"></div>
+</section>
+
+<section class="view" id="v-shell">
+  <div class="row">
+    <label>工作目录</label><input id="s-cwd" style="width:240px" placeholder="留空 = 服务进程默认">
+    <label>超时</label>
+    <select id="s-timeout"><option>10</option><option selected>60</option><option>120</option><option>300</option></select>
+    <label>秒</label>
+  </div>
+  <textarea id="s-cmd" placeholder="例如：df -h && free -m&#10;docker ps --format 'table {{.Names}}\t{{.Status}}'"></textarea>
+  <div class="row"><button class="act" onclick="execShell()">执行</button>
+    <span class="muted">bash -lc 执行；受 shell_allow / shell_deny / shell_timeout_max 约束，超时整组强杀</span></div>
+  <pre id="s-out">输入命令后点「执行」。</pre>
+</section>
+
+<section class="view" id="v-proc">
+  <div class="row">
+    <label>排序</label>
+    <select id="p-sort"><option value="cpu">CPU</option><option value="mem">内存</option></select>
+    <label>数量</label><input id="p-limit" value="25" style="width:60px">
+    <button class="act" onclick="loadProc()">刷新</button>
+  </div>
+  <div id="p-table"></div>
+  <h3>监听端口</h3>
+  <div id="port-table"></div>
+</section>
+
+<section class="view" id="v-log">
+  <div class="row">
+    <label>来源</label><select id="l-src" style="min-width:280px"></select>
+    <label>行数</label><input id="l-tail" value="300" style="width:70px">
+    <label>过滤（子串或 /正则/）</label><input id="l-grep" style="width:200px" placeholder='如 2026-09-29 15:0 或 /ERROR|Exception/'>
+    <button class="act" onclick="loadLog()">读取</button>
+    <label><input type="checkbox" id="l-auto"> 每5秒</label>
+  </div>
+  <pre id="l-out">选择日志源后点「读取」。</pre>
+</section>
+
+<section class="view" id="v-db">
+  <textarea id="d-sql" placeholder="select name,sql from sqlite_master where type='table'"></textarea>
+  <div class="row"><button class="act" onclick="runSql()">执行（仅 SELECT）</button><span class="muted">只读连接打开数据库，单条语句；db_path 留空时不可用</span></div>
+  <div id="d-out"></div>
+</section>
+
+<section class="view" id="v-fs">
+  <div class="row">
+    <div id="fs-crumbs" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap"></div>
+    <button class="mini" onclick="fsGo($('#fs-cur').value)" title="刷新">刷新</button>
+    <span class="muted">只读浏览，范围限 fs_roots 白名单；写操作请用 Shell</span>
+  </div>
+  <input type="hidden" id="fs-cur" value="">
+  <div id="fs-table"></div>
+  <div id="fs-box" style="display:none">
+    <div class="row"><h3 style="margin:0" id="fs-file"></h3>
+      <button class="mini" onclick="$('#fs-box').style.display='none'">关闭预览</button>
+      <span class="muted" id="fs-meta"></span></div>
+    <pre id="fs-preview"></pre>
+  </div>
+</section>
+
+<section class="view" id="v-keys">
+  <div class="row">
+    <button class="act" onclick="keyFormShow(null)">新建密钥</button>
+    <span class="muted">MCP 客户端用密钥接入 /mcp；每个密钥可单独勾选可用工具</span>
+  </div>
+  <div id="k-form" style="display:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin:8px 0">
+    <div class="row"><label>名称</label><input id="k-name" style="width:220px" placeholder="如 zcode-本机"></div>
+    <div id="k-groups"></div>
+    <div class="row">
+      <button class="act" onclick="saveKey()">保存</button>
+      <button class="mini" onclick="keyFormHide()">取消</button>
+      <span id="k-newkey"></span>
+    </div>
+  </div>
+  <div id="k-table"></div>
+</section>
+
+<section class="view" id="v-arthas">
+  <div class="row">
+    <button class="act" onclick="loadArthas()">刷新状态</button>
+    <span id="a-status" class="muted"></span>
+  </div>
+  <h3>JVM 进程</h3>
+  <div id="a-jvm"></div>
+  <h3>命令（只读白名单）</h3>
+  <div class="row">
+    <button class="mini" onclick="acmd('thread -n 5')">thread -n 5</button>
+    <button class="mini" onclick="acmd('thread --state BLOCKED')">thread BLOCKED</button>
+    <button class="mini" onclick="acmd('jvm')">jvm</button>
+    <button class="mini" onclick="acmd('memory')">memory</button>
+    <button class="mini" onclick="acmd('dashboard -n 1')">dashboard</button>
+    <button class="mini" onclick="acmd('help')">help</button>
+  </div>
+  <div class="row">
+    <input id="a-cmd" style="flex:1;min-width:300px" placeholder="thread -n 5 / jvm / sc 全限定名 / trace 类 方法 #cost>100" onkeydown="if(event.key==='Enter')execA()">
+    <button class="act" onclick="execA()">执行</button>
+    <select id="a-timeout"><option>30</option><option>60</option><option>120</option></select>
+  </div>
+  <pre id="a-out"></pre>
+  <div class="muted" id="a-console"></div>
+</section>
+
+</main>
+
+<div class="overlay" id="login">
+  <div class="login">
+    <h2>server-mcp 管理登录</h2>
+    <span class="muted">输入 config.json 里 admin_password 对应的管理密码</span>
+    <input id="lg-pass" type="password" placeholder="管理密码" onkeydown="if(event.key==='Enter')doLogin()">
+    <div class="err" id="lg-err"></div>
+    <div class="row"><button class="act" style="flex:1" onclick="doLogin()">登录</button></div>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let TOKEN=localStorage.getItem("server_mcp_session")||"";
+let loginResolve=null;
+let toastTimer;function toast(m){$("#whoami").textContent=m;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$("#whoami").textContent="",2500)}
+
+function showLogin(){
+  return new Promise(res=>{loginResolve=res;$("#login").style.display="flex";setTimeout(()=>$("#lg-pass").focus(),50)});
+}
+async function doLogin(){
+  try{
+    const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({password:$("#lg-pass").value})});
+    const b=await r.json();
+    if(!r.ok)throw new Error(b.error||r.status);
+    TOKEN=b.token;localStorage.setItem("server_mcp_session",TOKEN);
+    $("#login").style.display="none";$("#lg-err").textContent="";$("#lg-pass").value="";
+    $("#btn-logout").style.display="";
+    if(loginResolve){loginResolve(true);loginResolve=null}
+    refreshCurrent();
+  }catch(e){$("#lg-err").textContent=e.message}
+}
+function logout(){
+  if(TOKEN)fetch("/api/logout",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN}});
+  TOKEN="";localStorage.removeItem("server_mcp_session");
+  $("#btn-logout").style.display="none";showLogin();
+}
+async function api(path,opt={}){
+  const r=await fetch(path,{...opt,headers:{"Content-Type":"application/json",
+    ...(TOKEN?{"Authorization":"Bearer "+TOKEN}:{})}});
+  if(r.status===401){await showLogin();return api(path,opt)}
+  const body=await r.json();
+  if(!r.ok)throw new Error(body.error||r.status);
+  return body;
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function table(cols,rows){
+  if(!rows||!rows.length)return'<p class="muted">无数据</p>';
+  return `<table><tr>${cols.map(c=>`<th>${c[0]}</th>`).join("")}</tr>`+
+    rows.map(r=>`<tr>${cols.map(c=>`<td class="${c[2]||""}">${c[1](r)}</td>`).join("")}</tr>`).join("")+"</table>";
+}
+
+/* tabs */
+const loaders={overview:loadOverview,proc:loadProc,log:initLogs,fs:()=>fsGo(""),keys:loadKeys,arthas:loadArthas};
+document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#nav button").forEach(x=>x.classList.remove("on"));
+  document.querySelectorAll(".view").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");$("#v-"+b.dataset.v).classList.add("on");
+  (loaders[b.dataset.v]||(()=>{}))();
+});
+function refreshCurrent(){
+  const on=document.querySelector("#nav button.on");
+  (loaders[on?on.dataset.v:"overview"]||(()=>{}))();
+}
+
+/* 总览 */
+async function loadOverview(){
+  try{
+    const d=await api("/api/overview");
+    $("#ov-cards").innerHTML=[
+      ["运行 "+d.uptime_h.toFixed(1)+"h","服务器运行时长"],["load "+d.load.join(" / "),"负载"],
+      [d.mem_used_pct+"% / "+d.mem_total_gb.toFixed(1)+"G","内存使用"],["磁盘 "+d.disk_used_pct+"%","根分区使用"]
+    ].map(c=>`<div class="card"><b>${esc(c[0])}</b><span>${c[1]}</span></div>`).join("");
+    $("#ov-top").innerHTML=table(
+      [["PID",r=>r.pid],["进程",r=>esc(r.name)],["用户",r=>esc(r.user)],
+       ["CPU%",r=>r.cpu,"num"],["内存%",r=>r.mem,"num"],["启动",r=>esc(r.started)]],d.top);
+  }catch(e){$("#ov-cards").innerHTML=`<p class="err">${esc(e.message)}</p>`}
+}
+
+/* Shell */
+async function execShell(){
+  const cmd=$("#s-cmd").value.trim();if(!cmd)return;
+  $("#s-out").textContent="执行中…";
+  try{
+    const d=await api("/api/exec",{method:"POST",body:JSON.stringify({
+      command:cmd,timeout:+$("#s-timeout").value,cwd:$("#s-cwd").value.trim()})});
+    const tag=d.timed_out?"【超时，已整组强杀】":`exit=${d.exit_code}`;
+    let text=`${tag}  ${d.duration_s}s`;
+    if(d.stdout)text+=`\n--- stdout ---\n${d.stdout}`;
+    if(d.stderr)text+=`\n--- stderr ---\n${d.stderr}`;
+    if(!d.stdout&&!d.stderr)text+="\n(无输出)";
+    $("#s-out").textContent=text;
+    $("#s-out").scrollTop=$("#s-out").scrollHeight;
+  }catch(e){$("#s-out").textContent="执行失败："+e.message}
+}
+
+/* 进程/端口 */
+async function loadProc(){
+  try{
+    const rows=await api(`/api/processes?sort=${$("#p-sort").value}&limit=${$("#p-limit").value}`);
+    $("#p-table").innerHTML=table(
+      [["PID",r=>r.pid],["进程",r=>esc(r.name)],["用户",r=>esc(r.user)],
+       ["CPU%",r=>r.cpu,"num"],["内存%",r=>r.mem,"num"],["启动",r=>esc(r.started)]],rows);
+    const ports=await api("/api/ports");
+    $("#port-table").innerHTML=table(
+      [["端口",r=>r.port,"num"],["PID",r=>r.pid<0?"-":r.pid],["进程",r=>esc(r.proc)]],ports);
+  }catch(e){$("#p-table").innerHTML=`<p class="err">${esc(e.message)}</p>`}
+}
+
+/* 日志 */
+let logTimer=null;
+async function initLogs(){
+  if($("#l-src").options.length)return;
+  try{
+    const d=await api("/api/logs");
+    const opts=[...d.files.map(f=>`<option value="${esc(f.path)}">${esc(f.path)} (${(f.size/1048576).toFixed(1)}M)</option>`),
+                ...d.containers.map(c=>`<option value="docker:${esc(c)}">docker: ${esc(c)}</option>`)];
+    $("#l-src").innerHTML=opts.join("")||'<option value="">白名单为空，请改 config.json</option>';
+    $("#l-auto").onchange=()=>autoLog();
+  }catch(e){$("#l-src").innerHTML=`<option value="">${esc(e.message)}</option>`}
+}
+function autoLog(){
+  clearInterval(logTimer);logTimer=null;
+  if($("#l-auto").checked)logTimer=setInterval(loadLog,5000);
+}
+async function loadLog(){
+  const src=$("#l-src").value;if(!src)return;
+  try{
+    const d=await api(`/api/log?source=${encodeURIComponent(src)}&tail=${$("#l-tail").value}&grep=${encodeURIComponent($("#l-grep").value)}`);
+    $("#l-out").textContent=`[${d.source}] 共 ${d.count} 行（${d.via}）\n\n`+d.text;
+    $("#l-out").scrollTop=$("#l-out").scrollHeight;
+  }catch(e){$("#l-out").textContent="读取失败："+e.message}
+}
+
+/* 数据库 */
+async function runSql(){
+  try{
+    const d=await api("/api/db",{method:"POST",body:JSON.stringify({sql:$("#d-sql").value})});
+    $("#d-out").innerHTML=`<p class="muted">${d.row_count} 行</p>`+
+      `<table><tr>${d.columns.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>`+
+      d.rows.map(r=>`<tr>${d.columns.map((c,i)=>`<td>${esc(r[i]===null?"":String(r[i]))}</td>`).join("")}</tr>`).join("")+"</table>";
+  }catch(e){$("#d-out").innerHTML=`<p class="err">${esc(e.message)}</p>`}
+}
+
+/* 文件浏览（只读） */
+function humanSize(n){
+  if(n<1024)return n+"B";
+  if(n<1048576)return (n/1024).toFixed(1)+"K";
+  if(n<1073741824)return (n/1048576).toFixed(1)+"M";
+  return (n/1073741824).toFixed(1)+"G";
+}
+async function fsGo(p){
+  try{
+    const d=await api("/api/fs?path="+encodeURIComponent(p||""));
+    $("#fs-cur").value=d.path;
+    $("#fs-box").style.display="none";
+    // 面包屑：根视图 + 逐级路径
+    let crumbs=`<a href="#" onclick="fsGo('');return false" style="color:var(--acc)">⌂ 根</a>`;
+    if(d.path){
+      let acc="";
+      d.path.split("/").filter(Boolean).forEach(seg=>{
+        acc+="/"+seg;
+        crumbs+=` <span class="muted">/</span> <a href="#" onclick="fsGo('${esc(acc)}');return false" style="color:var(--acc)">${esc(seg)}</a>`;
+      });
+    }
+    $("#fs-crumbs").innerHTML=crumbs+(d.parent?` <button class="mini" onclick="fsGo('${esc(d.parent)}')">上级</button>`:"");
+    const rows=d.entries.map(e=>({
+      name:e.is_dir
+        ?`<a href="#" onclick="fsGo('${esc(e.path)}');return false" style="color:var(--acc)">📁 ${esc(e.name)}</a>`
+        :`📄 ${esc(e.name)}`,
+      isDir:e.is_dir,
+      size:e.is_dir?"-":humanSize(e.size),
+      mtime:e.mtime||"-",
+      actions:e.is_dir?""
+        :`<button class="mini" onclick="fsPreview('${esc(e.path)}')">预览</button>
+           <button class="mini" onclick="fsDownload('${esc(e.path)}','${esc(e.name)}')">下载</button>`
+    }));
+    $("#fs-table").innerHTML=rows.length?table(
+      [["名称",r=>r.name],["大小",r=>r.size,r.isDir?"":"num"],
+       ["修改时间",r=>esc(r.mtime)],["操作",r=>r.actions]],rows)
+      :'<p class="muted">空目录</p>';
+  }catch(e){$("#fs-table").innerHTML=`<p class="err">${esc(e.message)}</p>`}
+}
+async function fsPreview(path){
+  try{
+    const d=await api(`/api/fs/read?path=${encodeURIComponent(path)}&end=tail`);
+    $("#fs-file").textContent=path.split("/").pop();
+    $("#fs-meta").textContent=d.binary?"二进制":`共 ${humanSize(d.size)}${d.truncated?"，预览尾部 256K":""}`;
+    $("#fs-preview").textContent=d.content||"(空文件)";
+    $("#fs-preview").scrollTop=$("#fs-preview").scrollHeight;
+    $("#fs-box").style.display="block";
+  }catch(e){toast(e.message)}
+}
+async function fsDownload(path,name){
+  try{
+    const r=await fetch("/api/fs/download?path="+encodeURIComponent(path),
+      {headers:{"Authorization":"Bearer "+TOKEN}});
+    if(r.status===401){await showLogin();return fsDownload(path,name)}
+    if(!r.ok)throw new Error((await r.json()).error||r.status);
+    const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement("a");
+    a.href=u;a.download=name;a.click();URL.revokeObjectURL(u);
+  }catch(e){toast("下载失败："+e.message)}
+}
+
+/* 密钥管理 */
+const GROUPS=[["Shell",["tool_exec"]],
+  ["系统",["tool_overview","tool_list_processes","tool_listening_ports"]],
+  ["日志",["tool_list_logs","tool_tail_log"]],
+  ["数据库",["tool_query_db"]],
+  ["Arthas",["tool_list_jvms","tool_arthas_status","tool_arthas_attach","tool_arthas_exec"]]];
+let editingId=null;
+function keyFormInit(){
+  $("#k-groups").innerHTML=GROUPS.map(([g,tools],i)=>
+    `<fieldset><legend>${g}</legend>`+tools.map(t=>
+      `<label><input type="checkbox" class="k-tool" value="${t}">${t.replace("tool_","")}</label>`).join("")+"</fieldset>").join("");
+}
+keyFormInit();
+function groupChips(tools){
+  return GROUPS.map(([g,ts])=>{
+    const all=ts.every(t=>tools.includes(t));
+    if(all)return`<span class="chip">${g}</span>`;
+    const hit=ts.filter(t=>tools.includes(t));
+    return hit.map(t=>`<span class="chip off">${t.replace("tool_","")}</span>`).join("");
+  }).join("");
+}
+let KEYS_CACHE=[];
+async function loadKeys(){
+  try{
+    KEYS_CACHE=await api("/api/keys");
+    $("#k-table").innerHTML=table(
+      [["名称",k=>esc(k.name)],
+       ["密钥",k=>`<span class="code" title="点击复制">${esc(k.key.slice(0,6))}…${esc(k.key.slice(-4))}</span> <button class="mini" onclick="copyKey('${esc(k.key)}')">复制</button>`],
+       ["权限",k=>groupChips(k.tools)],
+       ["状态",k=>k.enabled?'<span class="good">启用</span>':'<span class="err">停用</span>'],
+       ["最近使用",k=>esc(k.last_used||"-")],
+       ["操作",k=>`<button class="mini" onclick='keyFormShow(KEYS_CACHE.find(x=>x.id==="${k.id}"))'>编辑</button>
+          <button class="mini" onclick="toggleKey('${k.id}',${!k.enabled})">${k.enabled?"停用":"启用"}</button>
+          <button class="mini warn" onclick="delKey('${k.id}')">删除</button>`]],
+      KEYS_CACHE);
+  }catch(e){$("#k-table").innerHTML=`<p class="err">${esc(e.message)}</p>`}
+}
+function copyKey(k){navigator.clipboard.writeText(k);toast("密钥已复制")}
+function keyFormShow(k){
+  editingId=k?k.id:null;
+  $("#k-name").value=k?k.name:"";
+  document.querySelectorAll(".k-tool").forEach(cb=>{cb.checked=!!k&&k.tools.includes(cb.value)});
+  $("#k-newkey").innerHTML="";
+  $("#k-form").style.display="block";
+  if(!k)$("#k-name").focus();
+}
+function keyFormHide(){$("#k-form").style.display="none";editingId=null}
+function pickedTools(){return[...document.querySelectorAll(".k-tool:checked")].map(cb=>cb.value)}
+async function saveKey(){
+  const name=$("#k-name").value.trim(),tools=pickedTools();
+  try{
+    let k;
+    if(editingId){
+      k=await api(`/api/keys/${editingId}`,{method:"PUT",body:JSON.stringify({name,tools})});
+      toast("密钥已更新");
+    }else{
+      k=await api("/api/keys",{method:"POST",body:JSON.stringify({name,tools})});
+      $("#k-newkey").innerHTML=`<span class="muted">新密钥（只显示这一次，请复制保存）：</span> <span class="code">${esc(k.key)}</span> <button class="mini" onclick="copyKey('${esc(k.key)}')">复制</button>`;
+      $("#k-name").value="";document.querySelectorAll(".k-tool").forEach(cb=>cb.checked=false);
+      loadKeys();return;
+    }
+    keyFormHide();loadKeys();
+  }catch(e){$("#k-newkey").innerHTML=`<span class="err">${esc(e.message)}</span>`}
+}
+async function toggleKey(id,enabled){
+  try{await api(`/api/keys/${id}`,{method:"PUT",body:JSON.stringify({enabled})});loadKeys()}
+  catch(e){toast(e.message)}
+}
+async function delKey(id){
+  if(!confirm("确认删除该密钥？使用它的 MCP 客户端将立即失效"))return;
+  try{await api(`/api/keys/${id}`,{method:"DELETE"});loadKeys()}
+  catch(e){toast(e.message)}
+}
+
+/* Arthas */
+async function loadArthas(){
+  try{
+    const [st,jvms]=await Promise.all([api("/api/arthas/status"),api("/api/jvm")]);
+    $("#a-status").textContent=st.installed?(st.attached?`已 attach（telnet 在线）`:"未 attach"):"Arthas 未安装（README 有安装步骤）";
+    $("#a-console").innerHTML=st.attached?`人工控制台：<a href="#" onclick="alert('在服务器上打开 ${esc(st.console_url)}');return false">${esc(st.console_url)}</a>`:"";
+    $("#a-jvm").innerHTML=table(
+      [["PID",j=>j.pid,"num"],["进程",j=>esc(j.name)],["Tomcat",j=>j.is_tomcat?"✓":""],["命令行",j=>esc(j.cmd)]],jvms);
+  }catch(e){$("#a-status").innerHTML=`<span class="err">${esc(e.message)}</span>`}
+}
+function acmd(c){$("#a-cmd").value=c;execA()}
+async function execA(){
+  const cmd=$("#a-cmd").value.trim();if(!cmd)return;
+  $("#a-out").textContent="执行中…";
+  try{
+    const d=await api("/api/arthas/exec",{method:"POST",body:JSON.stringify({command:cmd,timeout:+$("#a-timeout").value})});
+    $("#a-out").textContent=d.output||"(无输出)";
+  }catch(e){$("#a-out").textContent="执行失败："+e.message}
+}
+
+/* 启动：探测是否需要登录 */
+(async()=>{
+  let authRequired=false;
+  try{
+    const info=await fetch("/api/authinfo").then(r=>r.json());
+    authRequired=!!info.auth_required;
+    if(authRequired)$("#btn-logout").style.display="";
+    else $("#auth-state").textContent="免登录模式（config.json 设置 admin_password 启用密码）";
+  }catch(e){}
+  if(authRequired&&!TOKEN)await showLogin();
+  loadOverview();
+})();
+</script>
+</body>
+</html>
