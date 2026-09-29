@@ -15,6 +15,8 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+
+	"servermcp/internal/audit"
 )
 
 // Manager 管理交互终端会话。
@@ -22,6 +24,7 @@ type Manager struct {
 	Enabled  bool
 	ShellBin string // 留空自动取 $SHELL，再退回 /bin/bash
 	MaxConns int    // 并发会话上限
+	Audit    *audit.Logger
 	live     atomic.Int32
 }
 
@@ -77,6 +80,8 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			[]byte("\r\n[server-mcp] 启动 shell 失败: "+err.Error()+"\r\n"))
 		return
 	}
+	m.Audit.Event("term_open", "console", map[string]any{
+		"remote": r.RemoteAddr, "shell": m.ShellBin, "pid": shell.Process.Pid})
 	defer func() {
 		// pty.Start 使子进程成为会话首进程；按进程组杀，避免遗留子进程
 		if shell.Process != nil {
@@ -85,6 +90,8 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = ptmx.Close()
 		_, _ = shell.Process.Wait()
+		m.Audit.Event("term_close", "console", map[string]any{
+			"remote": r.RemoteAddr, "pid": shell.Process.Pid})
 	}()
 
 	// 控制消息（resize）用文本帧，键盘输入用二进制帧

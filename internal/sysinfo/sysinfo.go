@@ -43,11 +43,15 @@ func fmtTime(sec int64) string {
 	return time.Unix(sec, 0).Format("01-02 15:04")
 }
 
-// collect 采集全部进程；primed=false 时先空扫一次再等 300ms，
-// 让 CPU 百分比反映采样窗口而非进程生命周期均值。
+// collect 采集全部进程。gopsutil 首次 CPUPercent 返回的是进程启动以来的
+// 生命周期均值，所以先空扫一遍建立基线，等 300ms 再正式采样，
+// 得到的才是采样窗口内的实时 CPU（与 psutil 的 priming 语义一致）。
 func collect() []Proc {
-	var procs []*process.Process
-	procs, _ = process.Processes()
+	procs, _ := process.Processes()
+	for _, p := range procs {
+		_, _ = p.CPUPercent()
+	}
+	time.Sleep(300 * time.Millisecond)
 	out := make([]Proc, 0, len(procs))
 	for _, p := range procs {
 		name, _ := p.Name()

@@ -23,9 +23,10 @@ serverMcp/
 ├── internal/
 │   ├── config/               # config.json 加载 + 默认值 + 路径解析
 │   ├── auth/                 # session.go 控制台会话；keys.go MCP 密钥存储（keys.json）
-│   ├── shell/                # shell 执行：超时整组强杀 + allow/deny 正则
-│   ├── sysinfo/              # 概况/进程/监听端口/JVM 发现（gopsutil）
-│   ├── logsw/                # 白名单日志 tail + grep（文件/glob/目录/Docker）
+│   ├── audit/                # 审计日志（JSON 行，audit.log）
+│   ├── shell/                # shell 执行：超时整组强杀 + allow/deny 正则（Run/RunAdmin）
+│   ├── sysinfo/              # 概况/进程/监听端口/JVM 发现（gopsutil，CPU 双采样）
+│   ├── logsw/                # 白名单日志 tail + grep + 大文件全量搜索（分页续扫）
 │   ├── dbquery/              # SQLite 只读查询（modernc.org/sqlite，免 CGO）
 │   ├── fsbrowse/             # 只读文件浏览：根目录白名单/目录列表/预览/下载
 │   ├── arthas/               # telnet.go 迷你 telnet 客户端；arthas.go attach/执行
@@ -33,6 +34,8 @@ serverMcp/
 │   ├── term/                 # 交互终端：PTY + WebSocket 桥接（creack/pty, gorilla/websocket）
 │   ├── web/                  # 路由/鉴权中间件/JSON API；static/ 内嵌控制台页面（含 xterm.js）
 │   └── textutil/             # UTF-8 安全截断
+├── Makefile                  # make build / release-linux / test / vet（显式指定平台）
+├── .github/workflows/ci.yml  # CI：build + vet + test + linux 交叉编译
 ├── config.example.json       # 配置样例（复制为 config.json）
 ├── deploy/server-mcp.service # systemd 单元
 └── .gitignore
@@ -74,9 +77,13 @@ serverMcp/
 - **网络**：默认只绑 `127.0.0.1`；对外提供时绑 Tailscale IP（100.x），公网不可达。这是第一道防线。
 - **文件浏览**：只读；路径先 realpath 解析再强制落在 `fs_roots` 白名单内，`..` 穿越与软链逃逸一律拒绝；
   预览上限 256K 并识别二进制；写操作请走 Shell（保持「shell 可写、其余只读」的一致边界）。
-- **Shell 执行**：`shell_enabled` 总开关（同时控制交互终端）；`shell_timeout_max` 限制单次超时上限（默认 300s），
-  超时对整个进程组 `SIGKILL` 不留孤儿；`shell_deny` 黑名单正则（优先级最高）；`shell_allow`
-  白名单正则（非空时未命中即拒）。注意：名单只是绊线而非沙箱，shell 能做本用户权限内的任何事。
+- **Shell 执行的名单边界**：`shell_allow` / `shell_deny` 是给 **MCP 密钥（agent）** 设的绊线，只约束
+  `tool_exec`；控制台 `/api/exec` 与交互终端走管理员通道（已过密码鉴权），不受名单约束。
+  `shell_timeout_max` 对所有通道生效（交互终端除外——终端由人自己控制）。超时对整个进程组
+  `SIGKILL` 不留孤儿。注意：名单只是绊线而非沙箱，shell 能做本用户权限内的任何事。
+- **审计日志**：`audit.log`（JSON 行，0600）记录登录成败、console/MCP 两侧的 shell 执行
+  （命令/退出码/耗时/来源）、终端开闭、Arthas 操作、密钥增删改——不含密码与密钥明文。
+  `audit_path` 留空关闭。
 - **交互终端**：WebSocket + PTY，等同给管理员开了一条 SSH——受登录会话（含 cookie 通道）与
   `shell_enabled` 约束，并发上限 8；交互输入无法逐条过 allow/deny 名单，它是管理员的 shell，
   请像管理 SSH 账号一样管理控制台密码。断开即整组杀进程，不留孤儿。
@@ -87,11 +94,15 @@ serverMcp/
 ## 构建与部署
 
 ```bash
-# 本机构建（Apple Silicon）
-GOOS=darwin GOARCH=arm64 go build -o server-mcp ./cmd/server
+# 本机构建（自动匹配本机平台，不受全局 go env 干扰）
+make build
 
-# 交叉编译 Linux 服务器版
-GOOS=linux GOARCH=amd64 go build -o server-mcp ./cmd/server
+# 交叉编译 Linux 服务器版 → dist/
+make release-linux            # amd64
+make release-linux-arm64      # arm64
+
+# 测试与检查
+make test && make vet
 ```
 
 ```bash
@@ -121,6 +132,7 @@ sudo unzip -q arthas-bin.zip
 | `host` / `port` | 监听地址；对外绑 Tailscale IP，纯本机用 127.0.0.1 |
 | `admin_password` | 控制台登录密码；空 = 控制台免登录（仅建议纯本机） |
 | `keys_path` | MCP 密钥存储路径；相对路径基于 config.json 所在目录 |
+| `audit_path` | 审计日志路径（JSON 行）；留空关闭审计 |
 | `session_ttl_h` | 控制台会话有效期（小时，默认 168） |
 | `shell_enabled` | 是否开放 shell 执行能力 |
 | `shell_allow` / `shell_deny` | shell 命令白/黑名单正则；deny 优先，allow 非空时未命中即拒 |
@@ -171,3 +183,5 @@ sudo unzip -q arthas-bin.zip
 - 文件浏览：根视图/目录列表/尾部预览/二进制识别/下载 ✅；`/etc/passwd`、多级 `..` 穿越、软链逃逸全部拒绝 ✅；未登录 401 ✅
 - 全文件搜索（10 万行/2.9MB 样本 + limit=1/2 强制分页）：子串/正则命中行号准确 ✅；续扫行号与全文件对齐（50001 → 100002）✅；ci 忽略大小写 ✅；非法正则 400 ✅；MCP tools/list 12 个工具、tool_search_log 翻页 ✅
 - 交互终端（WS+PTY）：未登录握手 401 ✅；登录会话连接后命令回显 ✅；cd/环境变量跨命令保持 ✅；resize 控制帧生效 ✅；客户端断开后进程组整杀、无孤儿 ✅；xterm.js/fit-addon 由二进制内嵌伺服 ✅
+- 单元测试（`go test ./...`，CI 同款）：logsw 搜索分页/行号对齐/matcher ✅；shell 名单/超时强杀/管理员通道 ✅；auth 会话过期/密钥生命周期 ✅；fsbrowse 穿越/软链逃逸拒绝 ✅；dbquery 只读校验 ✅；config 加载/路径解析 ✅
+- 审计日志：login_ok/console_shell_exec（命令、退出码、耗时、来源）JSON 行落盘 0600 ✅；make build 版本注入（git describe → --version）✅

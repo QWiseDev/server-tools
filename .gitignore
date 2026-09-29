@@ -1,6 +1,8 @@
 server-mcp
 keys.json
+audit.log
 config.json
 arthas-attach.log
 arthas-bin.zip
 arthas-bin/
+dist/

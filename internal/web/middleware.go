@@ -2,32 +2,12 @@
 package web
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
 	"servermcp/internal/auth"
 	"servermcp/internal/config"
 )
-
-type ctxKeyType int
-
-const (
-	ctxKeyMCPKey ctxKeyType = iota
-	ctxKeyAdmin
-)
-
-// KeyFromContext 返回当前请求关联的 MCP 密钥（/mcp 专用）。
-func KeyFromContext(ctx context.Context) *auth.Key {
-	k, _ := ctx.Value(ctxKeyMCPKey).(*auth.Key)
-	return k
-}
-
-// IsAdmin 报告当前请求是否为控制台登录会话。
-func IsAdmin(ctx context.Context) bool {
-	v, _ := ctx.Value(ctxKeyAdmin).(bool)
-	return v
-}
 
 // bearerToken 从 Authorization 头解析 Bearer 值。
 func bearerToken(h string) string {
@@ -61,8 +41,7 @@ func AuthGuard(cfg *config.Config, keys *auth.KeyStore, sess *auth.Sessions) fun
 					http.Error(w, "unauthorized: 无效或已停用的 MCP 密钥", http.StatusUnauthorized)
 					return
 				}
-				next.ServeHTTP(w, r.WithContext(
-					context.WithValue(r.Context(), ctxKeyMCPKey, key)))
+				next.ServeHTTP(w, r)
 			case strings.HasPrefix(p, "/api"):
 				if cfg.AdminPassword != "" {
 					tok := bearerToken(r.Header.Get("Authorization"))
@@ -76,8 +55,7 @@ func AuthGuard(cfg *config.Config, keys *auth.KeyStore, sess *auth.Sessions) fun
 						return
 					}
 				}
-				next.ServeHTTP(w, r.WithContext(
-					context.WithValue(r.Context(), ctxKeyAdmin, true)))
+				next.ServeHTTP(w, r)
 			default:
 				http.NotFound(w, r)
 			}

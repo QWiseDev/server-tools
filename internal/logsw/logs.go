@@ -120,6 +120,10 @@ func (m *Manager) allowed(source string) (string, error) {
 		if err != nil {
 			continue
 		}
+		// 基准目录同样做 realpath（macOS 的 /var、/tmp 是软链，不解析会对不上）
+		if b2, err2 := filepath.EvalSymlinks(base); err2 == nil {
+			base = b2
+		}
 		if strings.HasPrefix(rp, base+string(filepath.Separator)) {
 			return rp, nil
 		}

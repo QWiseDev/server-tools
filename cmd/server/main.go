@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"servermcp/internal/arthas"
+	"servermcp/internal/audit"
 	"servermcp/internal/auth"
 	"servermcp/internal/config"
 	"servermcp/internal/dbquery"
@@ -44,7 +45,11 @@ func main() {
 	fmt.Printf("[server-mcp] v%s 配置: %s；控制台密码=%s；shell=%v\n",
 		version, where, onOff(cfg.AdminPassword != ""), onOff(cfg.ShellEnabled))
 
-	// 密钥与能力装配
+	// 密钥、审计与能力装配
+	auditLogger, err := audit.New(cfg.AuditPath)
+	if err != nil {
+		log.Fatalf("[server-mcp] %v", err)
+	}
 	keys := auth.NewKeyStore(cfg.KeysPath, mcpserver.AllTools())
 	if err := keys.EnsureLoad(); err != nil {
 		log.Fatalf("[server-mcp] %v", err)
@@ -53,6 +58,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("[server-mcp] %v", err)
 	}
+	terminal := term.New(cfg.ShellEnabled, "", 8)
+	terminal.Audit = auditLogger
 
 	srv := web.Server{
 		Cfg:    cfg,
@@ -63,7 +70,8 @@ func main() {
 		DB:     dbquery.New(cfg.DBPath, cfg.MaxOutput),
 		Arthas: arthas.New(cfg),
 		FS:     fsbrowse.New(cfg.FsRoots),
-		Term:   term.New(cfg.ShellEnabled, "", 8),
+		Term:   terminal,
+		Audit:  auditLogger,
 	}
 	mc := mcpserver.NewServer(mcpserver.Deps{
 		Shell:  runner,
@@ -71,6 +79,7 @@ func main() {
 		DB:     srv.DB,
 		Arthas: srv.Arthas,
 		Keys:   keys,
+		Audit:  auditLogger,
 	}, version)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mc }, nil)
 

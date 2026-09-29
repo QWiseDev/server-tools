@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Config 是 config.json 的全部字段；未填写的字段使用默认值。
@@ -13,6 +14,7 @@ type Config struct {
 	Port          int    `json:"port"`
 	AdminPassword string `json:"admin_password"` // Web 控制台登录密码；空 = 控制台免登录
 	KeysPath      string `json:"keys_path"`      // MCP 密钥存储；相对路径基于配置文件所在目录
+	AuditPath     string `json:"audit_path"`     // 审计日志（JSON 行）；空 = 关闭审计
 	SessionTTLH   int    `json:"session_ttl_h"`  // 控制台会话有效期（小时）
 
 	DBPath           string   `json:"db_path"`  // SQLite；留空关闭查询能力
@@ -41,6 +43,7 @@ func Defaults() Config {
 		Host:             "127.0.0.1",
 		Port:             8808,
 		KeysPath:         "keys.json",
+		AuditPath:        "audit.log",
 		SessionTTLH:      168,
 		FsRoots:          []string{"~"},
 		LogFiles:         []string{},
@@ -57,6 +60,7 @@ func Defaults() Config {
 }
 
 // Load 读取配置文件（JSON），未提供的字段保持默认值。
+// keys_path / audit_path 相对路径基于配置文件所在目录解析。
 func Load(path string) (*Config, string, error) {
 	cfg := Defaults()
 	where := "内置默认值"
@@ -70,8 +74,11 @@ func Load(path string) (*Config, string, error) {
 		}
 		where = path
 	}
-	if cfg.KeysPath != "" && !filepathIsAbs(cfg.KeysPath) {
+	if cfg.KeysPath != "" && !filepath.IsAbs(cfg.KeysPath) {
 		cfg.KeysPath = JoinDir(Dir(path), cfg.KeysPath)
+	}
+	if cfg.AuditPath != "" && !filepath.IsAbs(cfg.AuditPath) {
+		cfg.AuditPath = JoinDir(Dir(path), cfg.AuditPath)
 	}
 	return &cfg, where, nil
 }

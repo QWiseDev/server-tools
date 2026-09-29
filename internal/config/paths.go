@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-func filepathIsAbs(p string) bool { return filepath.IsAbs(p) }
-
 // Dir 返回 path 的目录；path 为空（未指定配置文件）时返回当前目录。
 func Dir(path string) string {
 	if path == "" {

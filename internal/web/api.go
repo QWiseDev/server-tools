@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"servermcp/internal/arthas"
+	"servermcp/internal/audit"
 	"servermcp/internal/auth"
 	"servermcp/internal/config"
 	"servermcp/internal/dbquery"
@@ -30,6 +31,7 @@ type Server struct {
 	Arthas *arthas.Manager
 	FS     *fsbrowse.Manager
 	Term   *term.Manager
+	Audit  *audit.Logger
 }
 
 // ---- 小工具 ----
@@ -51,8 +53,6 @@ func readBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 // Register 把全部路由挂到 mux。
 func (s *Server) Register(mux *http.ServeMux, mcpHandler http.Handler, indexHTML []byte) {
@@ -120,9 +120,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	token := s.Sess.Verify(s.Cfg.AdminPassword, body.Password)
 	if token == "" {
 		time.Sleep(500 * time.Millisecond) // 减缓爆破
+		s.Audit.Event("login_failed", "console", map[string]any{"remote": r.RemoteAddr})
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "密码错误"})
 		return
 	}
+	s.Audit.Event("login_ok", "console", map[string]any{"remote": r.RemoteAddr})
 	// 会话同时下发 cookie：WebSocket（/api/ws/term）无法携带 Authorization 头
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
@@ -161,6 +163,8 @@ func (s *Server) handleKeysCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// 审计只记名称与授权工具集，绝不记密钥明文
+	s.Audit.Event("key_created", "console", map[string]any{"id": k.ID, "name": k.Name, "tools": k.Tools})
 	writeJSON(w, http.StatusOK, k)
 }
 
@@ -178,6 +182,8 @@ func (s *Server) handleKeysUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.Audit.Event("key_updated", "console", map[string]any{
+		"id": k.ID, "name": k.Name, "tools": k.Tools, "enabled": k.Enabled})
 	writeJSON(w, http.StatusOK, k)
 }
 
@@ -186,6 +192,7 @@ func (s *Server) handleKeysDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.Audit.Event("key_deleted", "console", map[string]any{"id": r.PathValue("id")})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -271,11 +278,22 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	if !readBody(w, r, &body) {
 		return
 	}
-	res, err := s.Shell.Run(body.Command, body.Timeout, body.Cwd)
+	// 管理员通道：跳过 allow/deny 名单（名单管 MCP 密钥侧），但记录审计
+	res, err := s.Shell.RunAdmin(body.Command, body.Timeout, body.Cwd)
+	entry := map[string]any{
+		"command": body.Command, "timeout_s": body.Timeout,
+		"cwd": body.Cwd, "remote": r.RemoteAddr,
+	}
 	if err != nil {
+		entry["error"] = err.Error()
+		s.Audit.Event("console_shell_exec", "console", entry)
 		writeErr(w, err)
 		return
 	}
+	entry["exit_code"] = res.ExitCode
+	entry["timed_out"] = res.TimedOut
+	entry["duration_s"] = res.DurationS
+	s.Audit.Event("console_shell_exec", "console", entry)
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -331,6 +349,7 @@ func (s *Server) handleArthasAttach(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.Audit.Event("arthas_attach", "console", map[string]any{"pid": body.PID})
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -343,9 +362,13 @@ func (s *Server) handleArthasExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := s.Arthas.Exec(body.Command, body.Timeout)
+	entry := map[string]any{"command": body.Command, "timeout_s": body.Timeout}
 	if err != nil {
+		entry["error"] = err.Error()
+		s.Audit.Event("arthas_exec", "console", entry)
 		writeErr(w, err)
 		return
 	}
+	s.Audit.Event("arthas_exec", "console", entry)
 	writeJSON(w, http.StatusOK, map[string]string{"output": out})
 }

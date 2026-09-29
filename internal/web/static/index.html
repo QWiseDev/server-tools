@@ -412,25 +412,25 @@ async function fsGo(p){
     const d=await api("/api/fs?path="+encodeURIComponent(p||""));
     $("#fs-cur").value=d.path;
     $("#fs-box").style.display="none";
-    // 面包屑：根视图 + 逐级路径
-    let crumbs=`<a href="#" onclick="fsGo('');return false" style="color:var(--acc)">⌂ 根</a>`;
+    // 面包屑：根视图 + 逐级路径（路径放 data-*，点击统一走事件委托，避免拼接 JS）
+    let crumbs=`<a href="#" data-fs-open="" style="color:var(--acc)">⌂ 根</a>`;
     if(d.path){
       let acc="";
       d.path.split("/").filter(Boolean).forEach(seg=>{
         acc+="/"+seg;
-        crumbs+=` <span class="muted">/</span> <a href="#" onclick="fsGo('${esc(acc)}');return false" style="color:var(--acc)">${esc(seg)}</a>`;
+        crumbs+=` <span class="muted">/</span> <a href="#" data-fs-open="${esc(acc)}" style="color:var(--acc)">${esc(seg)}</a>`;
       });
     }
-    $("#fs-crumbs").innerHTML=crumbs+(d.parent?` <button class="mini" onclick="fsGo('${esc(d.parent)}')">上级</button>`:"");
+    $("#fs-crumbs").innerHTML=crumbs+(d.parent?` <button class="mini" data-fs-open="${esc(d.parent)}">上级</button>`:"");
     const rows=d.entries.map(e=>({
       name:e.is_dir
-        ?`<a href="#" onclick="fsGo('${esc(e.path)}');return false" style="color:var(--acc)">📁 ${esc(e.name)}</a>`
+        ?`<a href="#" data-fs-open="${esc(e.path)}" style="color:var(--acc)">📁 ${esc(e.name)}</a>`
         :`📄 ${esc(e.name)}`,
       size:e.is_dir?"-":humanSize(e.size),
       mtime:e.mtime||"-",
       actions:e.is_dir?""
-        :`<button class="mini" onclick="fsPreview('${esc(e.path)}')">预览</button>
-           <button class="mini" onclick="fsDownload('${esc(e.path)}','${esc(e.name)}')">下载</button>`
+        :`<button class="mini" data-fs-preview="${esc(e.path)}">预览</button>
+           <button class="mini" data-fs-download="${esc(e.path)}" data-name="${esc(e.name)}">下载</button>`
     }));
     $("#fs-table").innerHTML=rows.length?table(
       [["名称",r=>r.name],["大小",r=>r.size,"num"],
@@ -438,6 +438,16 @@ async function fsGo(p){
       :'<p class="muted">空目录</p>';
   }catch(e){$("#fs-table").innerHTML=`<p class="err">${esc(e.message)}</p>`}
 }
+/* 文件页统一事件委托：路径/文件名只经 data-* 传递，不拼进内联 JS */
+document.addEventListener("click",ev=>{
+  const t=ev.target;
+  const open=t.closest("[data-fs-open]");
+  if(open){ev.preventDefault();fsGo(open.dataset.fsOpen);return}
+  const pv=t.closest("[data-fs-preview]");
+  if(pv){fsPreview(pv.dataset.fsPreview);return}
+  const dl=t.closest("[data-fs-download]");
+  if(dl){fsDownload(dl.dataset.fsDownload,dl.dataset.name||"file")}
+});
 async function fsPreview(path){
   try{
     const d=await api(`/api/fs/read?path=${encodeURIComponent(path)}&end=tail`);

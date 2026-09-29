@@ -123,12 +123,15 @@ type StatusResult struct {
 // Status 返回安装/attach 状态。
 func (m *Manager) Status() *StatusResult {
 	d := m.arthasDir()
+	m.mu.Lock()
+	lastPID := m.attachedPID
+	m.mu.Unlock()
 	st := &StatusResult{
 		Installed:   d != "",
 		ArthasHome:  d,
 		Attached:    portOpen(m.cfg.ArthasTelnetPort, "127.0.0.1", 500*time.Millisecond),
 		ConsoleURL:  fmt.Sprintf("http://<server-host>:%d/", m.cfg.ArthasHTTPPort),
-		AttachedPID: m.attachedPID,
+		AttachedPID: lastPID,
 	}
 	if !st.Attached {
 		st.AttachedPID = 0
@@ -216,9 +219,12 @@ func (m *Manager) Attach(pid int) (*AttachResult, error) {
 			"`java -jar arthas-boot.jar` 安装一次（默认装到 ~/.arthas/lib/）")
 	}
 	if portOpen(m.cfg.ArthasTelnetPort, "127.0.0.1", 500*time.Millisecond) {
+		m.mu.Lock()
+		lastPID := m.attachedPID
+		m.mu.Unlock()
 		return &AttachResult{OK: true,
 			Message: fmt.Sprintf("已有 Arthas agent 在监听 %d，直接使用", m.cfg.ArthasTelnetPort),
-			PID:     m.attachedPID}, nil
+			PID:     lastPID}, nil
 	}
 
 	common := []string{

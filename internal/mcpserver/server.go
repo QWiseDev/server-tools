@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"servermcp/internal/arthas"
+	"servermcp/internal/audit"
 	"servermcp/internal/auth"
 	"servermcp/internal/dbquery"
 	"servermcp/internal/logsw"
@@ -22,6 +23,7 @@ type Deps struct {
 	DB     *dbquery.Querier
 	Arthas *arthas.Manager
 	Keys   *auth.KeyStore
+	Audit  *audit.Logger
 }
 
 // ---- 各工具的输入/输出结构（jsonschema 描述会自动推导给 MCP 客户端）----
@@ -74,6 +76,7 @@ func NewServer(d Deps, version string) *mcp.Server {
 		"超时按进程组整组强杀，受 shell_allow/shell_deny 正则约束"},
 		func(ctx context.Context, req *mcp.CallToolRequest, in execIn) (*mcp.CallToolResult, shell.Result, error) {
 			res, err := d.Shell.Run(in.Command, in.Timeout, in.Cwd)
+			d.auditShell(req, "tool_exec", in.Command, in.Timeout, in.Cwd, res, err)
 			if err != nil {
 				return nil, shell.Result{}, err
 			}
@@ -160,6 +163,11 @@ func NewServer(d Deps, version string) *mcp.Server {
 		"如 thread -n 5 / jvm / memory / trace / watch。禁止 ognl、redefine 等写命令"},
 		func(ctx context.Context, req *mcp.CallToolRequest, in arthasExecIn) (*mcp.CallToolResult, string, error) {
 			out, err := d.Arthas.Exec(in.Command, in.Timeout)
+			entry := map[string]any{"tool": "tool_arthas_exec", "command": in.Command, "timeout_s": in.Timeout}
+			if err != nil {
+				entry["error"] = err.Error()
+			}
+			d.Audit.Event("mcp_arthas_exec", "key:"+d.actorName(req), entry)
 			return nil, out, err
 		})
 
@@ -201,6 +209,27 @@ func permissionMW(keys *auth.KeyStore) mcp.Middleware {
 			return res, err
 		}
 	}
+}
+
+// auditShell 记录一次 MCP shell 执行（含被名单拒绝的尝试），actor 为密钥名。
+func (d Deps) auditShell(req *mcp.CallToolRequest, tool, command string, timeout float64, cwd string, res *shell.Result, err error) {
+	entry := map[string]any{"tool": tool, "command": command, "timeout_s": timeout, "cwd": cwd}
+	if err != nil {
+		entry["error"] = err.Error()
+	} else {
+		entry["exit_code"] = res.ExitCode
+		entry["timed_out"] = res.TimedOut
+		entry["duration_s"] = res.DurationS
+	}
+	d.Audit.Event("mcp_shell_exec", "key:"+d.actorName(req), entry)
+}
+
+// actorName 返回调用方密钥名（密钥名可读、不含明文 key）。
+func (d Deps) actorName(req mcp.Request) string {
+	if k := keyFromRequest(d.Keys, req); k != nil {
+		return k.Name
+	}
+	return "unknown"
 }
 
 // keyFromRequest 从 HTTP 头里的 Bearer 找到启用状态的密钥。

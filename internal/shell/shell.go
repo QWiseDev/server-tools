@@ -99,12 +99,30 @@ func (r *Runner) guard(command string) error {
 	return nil
 }
 
-// Run 执行 command。timeoutSeconds<=0 时用默认 60s，超出上限则被钳制。
+// Run 执行 command（走 allow/deny 名单约束，MCP 密钥通道使用）。
+// timeoutSeconds<=0 时用默认 60s，超出上限则被钳制。
 // cwd 为空时用 Runner 默认目录，再为空则继承服务进程目录。
 func (r *Runner) Run(command string, timeoutSeconds float64, cwd string) (*Result, error) {
 	if err := r.guard(command); err != nil {
 		return nil, err
 	}
+	return r.exec(command, timeoutSeconds, cwd)
+}
+
+// RunAdmin 跳过 allow/deny 名单，仅供控制台管理员通道（/api/exec）使用：
+// 管理员已通过密码鉴权，且交互终端本就不受名单约束——名单是给 MCP
+// 密钥（agent）设的绊线，不该拦住控制台本人。shell_enabled 仍然生效。
+func (r *Runner) RunAdmin(command string, timeoutSeconds float64, cwd string) (*Result, error) {
+	if !r.enabled {
+		return nil, fmt.Errorf("shell 执行已关闭（config.json 的 shell_enabled）")
+	}
+	if command == "" {
+		return nil, fmt.Errorf("命令为空")
+	}
+	return r.exec(command, timeoutSeconds, cwd)
+}
+
+func (r *Runner) exec(command string, timeoutSeconds float64, cwd string) (*Result, error) {
 	timeout := 60 * time.Second
 	if timeoutSeconds > 0 {
 		timeout = time.Duration(timeoutSeconds * float64(time.Second))

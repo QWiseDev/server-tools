@@ -11,8 +11,7 @@ WorkingDirectory=/opt/server-mcp
 ExecStart=/opt/server-mcp/server-mcp --config /opt/server-mcp/config.json
 Restart=on-failure
 RestartSec=3
-# keys.json 由服务自行维护（0600）；config.json 里 admin_password 请用足够长的随机密码
-Environment=PYTHONUNBUFFERED=1
+# keys.json / audit.log 由服务自行维护（0600）；config.json 里 admin_password 请用足够长的随机密码
 
 [Install]
 WantedBy=multi-user.target
