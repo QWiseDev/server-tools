@@ -45,6 +45,7 @@ serverMcp/
 | `tool_list_processes` | 进程 | 按 CPU/内存排序的进程表 |
 | `tool_listening_ports` | 进程 | TCP 监听端口及归属进程 |
 | `tool_list_logs` / `tool_tail_log` | 日志 | 白名单文件 + 白名单容器日志，tail + grep（子串或 `/正则/`） |
+| `tool_search_log` | 日志 | 大文件全量搜索：子串或 `/正则/`、忽略大小写、全文件行号；分页续扫（`next_offset`），GB 级文件内存恒定 |
 | `tool_query_db` | 数据库 | SQLite 只读查询，仅单条 SELECT/WITH/EXPLAIN；`db_path` 留空则关闭 |
 | —（页面专属） | 文件 | 只读文件浏览：目录列表/文本预览（尾部 256K，二进制识别）/下载，范围限 `fs_roots` 白名单 |
 | `tool_list_jvms` | Arthas | JVM 进程列表（标注 Tomcat） |
@@ -162,3 +163,4 @@ sudo unzip -q arthas-bin.zip
 - 日志白名单：白名单内可读 ✅；`/etc/passwd` 拒绝 ✅
 - SQLite：只读查询（含中文）✅；INSERT 拒绝 ✅；db_path 留空报能力关闭 ✅
 - 文件浏览：根视图/目录列表/尾部预览/二进制识别/下载 ✅；`/etc/passwd`、多级 `..` 穿越、软链逃逸全部拒绝 ✅；未登录 401 ✅
+- 全文件搜索（10 万行/2.9MB 样本 + limit=1/2 强制分页）：子串/正则命中行号准确 ✅；续扫行号与全文件对齐（50001 → 100002）✅；ci 忽略大小写 ✅；非法正则 400 ✅；MCP tools/list 12 个工具、tool_search_log 翻页 ✅

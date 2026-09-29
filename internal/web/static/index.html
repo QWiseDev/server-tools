@@ -108,6 +108,14 @@ fieldset label{margin-right:12px;font-size:13px}
     <label><input type="checkbox" id="l-auto"> 每5秒</label>
   </div>
   <pre id="l-out">选择日志源后点「读取」。</pre>
+  <h3>全文件搜索（大文件）</h3>
+  <div class="row">
+    <input id="l-q" style="flex:1;min-width:260px" placeholder="子串或 /正则/，如 /ERROR|Exception/ 或 request-id" onkeydown="if(event.key==='Enter')logSearch(true)">
+    <label><input type="checkbox" id="l-ci"> 忽略大小写</label>
+    <button class="act" onclick="logSearch(true)">搜索</button>
+    <button class="mini" id="l-next" style="display:none" onclick="logSearch(false)">下一页（续扫）</button>
+  </div>
+  <pre id="l-search">输入模式后点「搜索」，扫描整个文件并返回行号；结果分页，可续扫。</pre>
 </section>
 
 <section class="view" id="v-db">
@@ -308,6 +316,26 @@ async function loadLog(){
     $("#l-out").textContent=`[${d.source}] 共 ${d.count} 行（${d.via}）\n\n`+d.text;
     $("#l-out").scrollTop=$("#l-out").scrollHeight;
   }catch(e){$("#l-out").textContent="读取失败："+e.message}
+}
+
+/* 全文件搜索（大文件，分页续扫） */
+let lsOffset=0;
+async function logSearch(fresh){
+  const src=$("#l-src").value;if(!src)return;
+  const grep=$("#l-q").value.trim();
+  if(!grep){$("#l-search").textContent="输入搜索模式";return}
+  if(fresh)lsOffset=0;
+  $("#l-search").textContent="扫描中…";
+  try{
+    const d=await api(`/api/logsearch?source=${encodeURIComponent(src)}&grep=${encodeURIComponent(grep)}`+
+      `&limit=200&offset=${lsOffset}&ci=${$("#l-ci").checked?1:0}`);
+    lsOffset=d.next_offset||0;
+    const prog=d.complete?"已扫完整个文件"
+      :`已扫描 ${(d.scanned_bytes/1048576).toFixed(1)}M / 共 ${(d.file_size/1048576).toFixed(1)}M`;
+    $("#l-search").textContent=`命中 ${d.matches.length} 条（${prog}）\n\n`+
+      (d.matches.map(m=>`${m.line}: ${m.text}`).join("\n")||"(无命中)");
+    $("#l-next").style.display=d.complete?"none":"";
+  }catch(e){$("#l-search").textContent="搜索失败："+e.message;$("#l-next").style.display="none"}
 }
 
 /* 数据库 */

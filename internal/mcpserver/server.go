@@ -43,6 +43,14 @@ type tailLogIn struct {
 	Grep   string `json:"grep,omitempty" jsonschema:"过滤：子串或 /正则/，如 /ERROR|Exception/"`
 }
 
+type searchLogIn struct {
+	Source string `json:"source" jsonschema:"日志文件路径（须在 log_files/log_dirs 白名单内）"`
+	Grep   string `json:"grep" jsonschema:"搜索模式：子串或 /正则/"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"单页最多命中条数，默认 200，最大 1000"`
+	Offset int64  `json:"offset,omitempty" jsonschema:"上一页返回的 next_offset，用于续扫翻页"`
+	CI     bool   `json:"ci,omitempty" jsonschema:"忽略大小写"`
+}
+
 type queryDBIn struct {
 	SQL string `json:"sql" jsonschema:"单条 SELECT/WITH/EXPLAIN 语句"`
 }
@@ -111,6 +119,14 @@ func NewServer(d Deps, version string) *mcp.Server {
 				tail = 300
 			}
 			res, err := d.Logs.Read(in.Source, tail, in.Grep)
+			return nil, res, err
+		})
+
+	mcp.AddTool(srv, &mcp.Tool{Name: ToolSearchLog, Description: "大日志文件全量搜索（流式扫描，内存恒定，" +
+		"GB 级可用）：子串或 /正则/，返回全文件行号与命中内容；命中达到单页上限时返回 next_offset，" +
+		"带该值再次调用即可续扫翻页。仅支持白名单文件，不支持 docker: 来源"},
+		func(ctx context.Context, req *mcp.CallToolRequest, in searchLogIn) (*mcp.CallToolResult, *logsw.SearchResult, error) {
+			res, err := d.Logs.Search(in.Source, in.Grep, in.Limit, in.Offset, in.CI)
 			return nil, res, err
 		})
 

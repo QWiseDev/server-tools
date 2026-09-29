@@ -81,6 +81,7 @@ func (s *Server) Register(mux *http.ServeMux, mcpHandler http.Handler, indexHTML
 	mux.HandleFunc("GET /api/ports", s.handlePorts)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("GET /api/log", s.handleLog)
+	mux.HandleFunc("GET /api/logsearch", s.handleLogSearch)
 	mux.HandleFunc("POST /api/db", s.handleDB)
 	mux.HandleFunc("POST /api/exec", s.handleExec)
 	mux.HandleFunc("GET /api/fs", s.handleFSList)
@@ -208,6 +209,18 @@ func (s *Server) handleLog(w http.ResponseWriter, r *http.Request) {
 		tail = 300
 	}
 	res, err := s.Logs.Read(q.Get("source"), tail, q.Get("grep"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleLogSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.ParseInt(q.Get("offset"), 10, 64)
+	res, err := s.Logs.Search(q.Get("source"), q.Get("grep"), limit, offset, q.Get("ci") == "1")
 	if err != nil {
 		writeErr(w, err)
 		return

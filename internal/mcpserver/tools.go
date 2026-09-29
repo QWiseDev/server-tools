@@ -9,6 +9,7 @@ const (
 	ToolListeningPorts = "tool_listening_ports"
 	ToolListLogs       = "tool_list_logs"
 	ToolTailLog        = "tool_tail_log"
+	ToolSearchLog      = "tool_search_log"
 	ToolQueryDB        = "tool_query_db"
 	ToolListJVMs       = "tool_list_jvms"
 	ToolArthasStatus   = "tool_arthas_status"
@@ -26,7 +27,7 @@ type Group struct {
 var Groups = []Group{
 	{"Shell", []string{ToolExec}},
 	{"系统", []string{ToolOverview, ToolListProcesses, ToolListeningPorts}},
-	{"日志", []string{ToolListLogs, ToolTailLog}},
+	{"日志", []string{ToolListLogs, ToolTailLog, ToolSearchLog}},
 	{"数据库", []string{ToolQueryDB}},
 	{"Arthas", []string{ToolListJVMs, ToolArthasStatus, ToolArthasAttach, ToolArthasExec}},
 }
